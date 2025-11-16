@@ -7,12 +7,11 @@ import UploadForm from './components/UploadForm';
 import ArticleModal from './components/ArticleModal';
 import LocusConnectModal from './components/LocusConnectModal';
 import PurchaseModal from './components/PurchaseModal';
-import { generateSummary } from './services/geminiService';
+import MCPClient from './components/MCPClient';
 import { disconnectWallet } from './services/locusService';
 import type { Article, NewArticleData } from './types';
-import { SAMPLE_NEWS_DATA } from './constants';
 
-type AppTab = 'marketplace' | 'myArticles';
+type AppTab = 'marketplace' | 'myArticles' | 'mcpClient';
 
 const MarketplaceApp: React.FC = () => {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -23,26 +22,28 @@ const MarketplaceApp: React.FC = () => {
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
-  const [articleToPurchase, setArticleToPurchase] = useState<Article | null>(null);
+  
+  // State for the purchase flow
+  const [purchaseChallenge, setPurchaseChallenge] = useState<{ invoice: string, token: string, article: Article } | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('marketplace');
 
-  useEffect(() => {
-    // Parse the sample data and initialize the state
-    try {
-      const rawDataString = `[${SAMPLE_NEWS_DATA.trim().replace(/}\s*{/g, '},{')}]`;
-      const parsedData: Omit<Article, 'id' | 'informationValue'>[] = JSON.parse(rawDataString);
-      
-      const initialArticles = parsedData.map((item, index) => ({
-        ...item,
-        id: `${Date.now()}-${index}`, // Create a unique ID
-        informationValue: Math.random() * 11 + 1, // IV range for prices ~$0.50-$6.00
-      })).sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()); // Sort by most recent
 
-      setArticles(initialArticles);
-    } catch (error)
- {
-      console.error("Failed to parse sample data:", error);
-    }
+  useEffect(() => {
+    // Fetch initial articles from the mock API
+    const fetchArticles = async () => {
+        setIsLoading(true);
+        try {
+            const res = await fetch('/api/articles');
+            if (!res.ok) throw new Error('Failed to fetch articles');
+            const data: Article[] = await res.json();
+            setArticles(data);
+        } catch (error) {
+            console.error("Error fetching articles:", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    fetchArticles();
   }, []);
 
   const handleConnectWallet = useCallback(() => {
@@ -74,16 +75,18 @@ const MarketplaceApp: React.FC = () => {
   const handleAddArticle = useCallback(async (articleData: NewArticleData) => {
     setIsLoading(true);
     try {
-      // Call the new service that fetches from our secure API route
-      const summary = await generateSummary(articleData.article);
-      const newArticle: Article = {
-        ...articleData,
-        id: Date.now().toString(),
-        time: new Date().toISOString(),
-        summary: summary,
-        informationValue: Math.random() * 11 + 1, // IV range for prices ~$0.50-$6.00
-      };
-      setArticles(prevArticles => [newArticle, ...prevArticles]);
+        const response = await fetch('/api/articles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(articleData),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to add article');
+        }
+
+        const newArticle: Article = await response.json();
+        setArticles(prevArticles => [newArticle, ...prevArticles]);
     } catch (error) {
         console.error("Failed to add article:", error)
         alert("There was an error uploading your article. Please check the console for details.")
@@ -95,43 +98,91 @@ const MarketplaceApp: React.FC = () => {
   const handleRemoveArticle = useCallback((articleId: string) => {
     if(window.confirm("Are you sure you want to remove this listing?")){
         setArticles(prev => prev.filter(article => article.id !== articleId));
+        // In a real app, you'd also make a DELETE request to the API
     }
   }, []);
 
-  const handleSelectArticle = useCallback((article: Article) => {
+  const handleSelectArticle = useCallback(async (article: Article) => {
     if (!walletAddress) return;
 
-    if (activeTab === 'myArticles') {
+    // If it's already purchased, just open it
+    if (purchasedArticles.some(p => p.id === article.id)) {
       setSelectedArticle(article);
-    } else {
-      console.log(`Initiating x402 purchase for "${article.title}"`);
-      setArticleToPurchase(article);
-      setIsPurchaseModalOpen(true);
+      return;
     }
-  }, [walletAddress, activeTab]);
+
+    // Attempt to fetch the protected article content
+    try {
+        const res = await fetch(`/api/articles/${article.id}`);
+        
+        if (res.ok) {
+            const fullArticle: Article = await res.json();
+            setSelectedArticle(fullArticle);
+            return;
+        }
+
+        if (res.status === 402) {
+            const authHeader = res.headers.get('WWW-Authenticate');
+            if (authHeader) {
+                const tokenMatch = authHeader.match(/token="([^"]+)"/);
+                const invoiceMatch = authHeader.match(/invoice="([^"]+)"/);
+                if (tokenMatch && invoiceMatch) {
+                    setPurchaseChallenge({
+                        article,
+                        token: tokenMatch[1],
+                        invoice: invoiceMatch[1],
+                    });
+                    setIsPurchaseModalOpen(true);
+                    return;
+                }
+            }
+        }
+        
+        throw new Error(`Unexpected response: ${res.status}`);
+
+    } catch (error) {
+        console.error("Error fetching article:", error);
+        alert("Could not fetch article. See console for details.");
+    }
+  }, [walletAddress, purchasedArticles]);
 
   const handleCloseModal = useCallback(() => {
     setSelectedArticle(null);
   }, []);
 
   const handleClosePurchaseModal = useCallback(() => {
-    setArticleToPurchase(null);
+    setPurchaseChallenge(null);
     setIsPurchaseModalOpen(false);
   }, []);
 
-  const handleConfirmPurchase = useCallback((purchasedArticle: Article, finalPrice: number) => {
+  const handleConfirmPurchase = useCallback(async (purchasedArticle: Article, finalPrice: number, token: string, preimage: string) => {
     setIsPurchaseModalOpen(false);
-    setArticleToPurchase(null);
-
-    // Deduct from balance
+    
     setWalletBalance(prev => (prev !== null ? prev - finalPrice : null));
     
-    // Move article from marketplace to purchased list
-    setArticles(prev => prev.filter(a => a.id !== purchasedArticle.id));
-    setPurchasedArticles(prev => [purchasedArticle, ...prev]);
+    try {
+        const res = await fetch(`/api/articles/${purchasedArticle.id}`, {
+            headers: {
+                'Authorization': `L402 ${token}:${preimage}`
+            }
+        });
 
-    // Show the full article content
-    setSelectedArticle(purchasedArticle);
+        if (!res.ok) throw new Error('Payment verification failed.');
+
+        const fullArticle: Article = await res.json();
+        
+        setArticles(prev => prev.filter(a => a.id !== purchasedArticle.id));
+        setPurchasedArticles(prev => [fullArticle, ...prev]);
+
+        setSelectedArticle(fullArticle);
+
+    } catch (error) {
+         console.error("Error after purchase confirmation:", error);
+         alert("Payment succeeded, but failed to retrieve the article. Please try again.");
+         setWalletBalance(prev => (prev !== null ? prev + finalPrice : null)); // Refund
+    } finally {
+        setPurchaseChallenge(null);
+    }
   }, []);
 
   const TabButton: React.FC<{tabName: AppTab, label: string}> = ({tabName, label}) => {
@@ -165,6 +216,7 @@ const MarketplaceApp: React.FC = () => {
             <div className="flex border-b border-gray-700">
                 <TabButton tabName="marketplace" label="Marketplace" />
                 <TabButton tabName="myArticles" label="My Articles" />
+                <TabButton tabName="mcpClient" label="MCP Client" />
             </div>
             <div className="bg-gray-800 p-8 rounded-b-lg rounded-tr-lg">
                 {activeTab === 'marketplace' && (
@@ -187,6 +239,9 @@ const MarketplaceApp: React.FC = () => {
                         isPurchasedView={true}
                     />
                 )}
+                 {activeTab === 'mcpClient' && (
+                    <MCPClient articles={articles} />
+                )}
             </div>
         </div>
 
@@ -198,7 +253,7 @@ const MarketplaceApp: React.FC = () => {
         onConnect={handleConfirmConnect}
       />
       <PurchaseModal
-        article={articleToPurchase}
+        challenge={purchaseChallenge}
         isOpen={isPurchaseModalOpen}
         onClose={handleClosePurchaseModal}
         onConfirm={handleConfirmPurchase}

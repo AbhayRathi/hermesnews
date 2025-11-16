@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { connectWallet } from '../services/locusService';
 
 interface LocusConnectModalProps {
   isOpen: boolean;
@@ -9,43 +8,21 @@ interface LocusConnectModalProps {
 
 const LocusConnectModal: React.FC<LocusConnectModalProps> = ({ isOpen, onClose, onConnect }) => {
   const [walletKey, setWalletKey] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [copyButtonText, setCopyButtonText] = useState('Copy');
 
   useEffect(() => {
-    if (isOpen) {
-      setIsLoading(true);
-      setCopyButtonText('Copy'); // Reset button text
-      
-      // Fetch a new key from the mock service when modal opens
-      connectWallet()
-        .then(address => {
-          setWalletKey(address);
-        })
-        .catch(err => {
-            console.error("Failed to get mock wallet address", err);
-            setWalletKey("Error fetching address...");
-        })
-        .finally(() => {
-          setIsLoading(false);
-        });
+    // Reset the key when the modal is opened/closed
+    if (!isOpen) {
+      setWalletKey('');
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleCopy = () => {
-    if(walletKey && !isLoading) {
-      navigator.clipboard.writeText(walletKey).then(() => {
-        setCopyButtonText('Copied!');
-        setTimeout(() => setCopyButtonText('Copy'), 2000); // Reset after 2s
-      });
-    }
-  };
-
   const handleConnect = () => {
-    if(walletKey && !isLoading) {
-      onConnect(walletKey);
+    if (walletKey.trim()) {
+      onConnect(walletKey.trim());
+    } else {
+      alert("Please enter a wallet key.");
     }
   };
 
@@ -72,25 +49,18 @@ const LocusConnectModal: React.FC<LocusConnectModalProps> = ({ isOpen, onClose, 
         </div>
         <div className="p-8 space-y-6">
           <p className="text-gray-400">
-            This is a simulation. In a real application, you would be prompted by the Locus Wallet extension. For now, you can use this generated key.
+            This is a simulation. In a real application, you would be prompted by the Locus Wallet extension. For now, you can enter any text to act as your wallet key.
           </p>
           <div>
-            <label className="text-sm font-semibold text-gray-300 mb-2 block">Your Simulated Wallet Key</label>
-            <div className="flex items-center space-x-2">
-              <input
-                type="text"
-                readOnly
-                value={isLoading ? "Generating key..." : walletKey}
-                className="w-full p-3 bg-gray-900 text-gray-200 rounded-md font-mono text-sm border border-gray-700 focus:outline-none"
-              />
-              <button
-                onClick={handleCopy}
-                disabled={isLoading}
-                className="bg-gray-600 hover:bg-gray-500 text-white font-semibold py-3 px-4 rounded-md transition-colors disabled:bg-gray-700 disabled:cursor-not-allowed"
-              >
-                {copyButtonText}
-              </button>
-            </div>
+            <label htmlFor="wallet-key-input" className="text-sm font-semibold text-gray-300 mb-2 block">Your Simulated Wallet Key</label>
+            <input
+              id="wallet-key-input"
+              type="text"
+              value={walletKey}
+              onChange={(e) => setWalletKey(e.target.value)}
+              placeholder="Paste your wallet key here..."
+              className="w-full p-3 bg-gray-900 text-gray-200 rounded-md font-mono text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-brand-blue"
+            />
           </div>
           <div className="flex justify-end space-x-4">
              <button
@@ -101,10 +71,10 @@ const LocusConnectModal: React.FC<LocusConnectModalProps> = ({ isOpen, onClose, 
              </button>
              <button
                 onClick={handleConnect}
-                disabled={isLoading}
+                disabled={!walletKey.trim()}
                 className="py-2 px-6 bg-brand-blue text-white font-bold rounded-md hover:bg-blue-600 transition-colors disabled:bg-gray-500 disabled:cursor-not-allowed"
              >
-                {isLoading ? "Loading..." : "Connect"}
+                Connect
              </button>
           </div>
         </div>

@@ -33,3 +33,22 @@ export const disconnectWallet = (): Promise<void> => {
     }, 300);
   });
 };
+
+/**
+ * Simulates paying a Lightning Network invoice via a WebLN provider.
+ * @param invoice - The mock LN invoice string.
+ * @returns A promise that resolves with a mock preimage (proof of payment).
+ */
+export const payInvoice = (invoice: string): Promise<string> => {
+    console.log(`Simulating payment for invoice: ${invoice}`);
+    return new Promise(resolve => {
+        setTimeout(() => {
+            // Generate a random 64-character hex string to act as the preimage
+            const mockPreimage = [...Array(64)]
+                .map(() => Math.floor(Math.random() * 16).toString(16))
+                .join('');
+            console.log(`Payment successful. Preimage: ${mockPreimage}`);
+            resolve(mockPreimage);
+        }, 1500); // Simulate payment processing delay
+    });
+};
