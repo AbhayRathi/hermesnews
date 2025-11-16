@@ -1,0 +1,5 @@
+{
+  "name": "Hermes News",
+  "description": "Hermes News is a decentralized news marketplace where publishers can upload content and agents consume it based on an Information Value system. Summaries for new articles are generated using the Gemini API.",
+  "requestFramePermissions": []
+}
